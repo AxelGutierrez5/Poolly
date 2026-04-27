@@ -26,6 +26,15 @@ export default function MiembrosPage() {
 
   useEffect(() => { cargar() }, [])
 
+  // RealTime
+  useEffect(() => {
+    const channel = supabase.channel('miembros-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'participantes', filter: `grupo_id=eq.${grupoId}` }, () => cargar())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'numeros_asignados', filter: `grupo_id=eq.${grupoId}` }, () => cargar())
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [grupoId])
+
   async function cargar() {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()

@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
-import { ArrowLeft, CheckCircle2, Clock, Calendar, List, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ArrowLeft, CheckCircle, Circle, Calendar, List, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { PageLoader } from '@/components/ui/SkeletonCard'
 
@@ -28,11 +28,22 @@ export default function TurnosPage() {
     return { year: hoy.getFullYear(), month: hoy.getMonth() }
   })
   const [turnoSel, setTurnoSel] = useState<any>(null)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
   useEffect(() => { cargar() }, [])
 
+  // RealTime
+  useEffect(() => {
+    const channel = supabase.channel('turnos-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'turnos', filter: `grupo_id=eq.${grupoId}` }, () => cargar())
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [grupoId])
+
   async function cargar() {
     setLoading(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) setCurrentUserId(user.id)
     const [{ data: g }, { data: t }] = await Promise.all([
       supabase.from('grupos').select('nombre').eq('id', grupoId).single(),
       supabase.from('turnos')
@@ -180,21 +191,13 @@ export default function TurnosPage() {
                     </p>
                     {t.participanteNombre && (
                       <p className="text-[11px] text-muted-foreground truncate">
-                        {t.participanteNombre} · nº {t.numero_asignado?.numero}
+                        {t.participanteNombre}
                       </p>
                     )}
                   </div>
-                  {t.estado === 'cobrado' ? (
-                    <div className="flex items-center gap-1 text-primary shrink-0">
-                      <CheckCircle2 className="h-4 w-4" />
-                      <span className="text-xs font-medium">Cobrado</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1 text-muted-foreground shrink-0">
-                      <Clock className="h-4 w-4" />
-                      <span className="text-xs font-medium">Pendiente</span>
-                    </div>
-                  )}
+                  {t.estado === 'cobrado'
+                    ? <CheckCircle className="h-4 w-4 text-primary shrink-0" />
+                    : <Circle className="h-4 w-4 text-muted-foreground/40 shrink-0" />}
                 </div>
               ))}
             </div>
@@ -216,31 +219,32 @@ export default function TurnosPage() {
           {!turnos.length ? (
             <p className="text-center text-muted-foreground py-10 text-sm">Sin turnos</p>
           ) : turnos.map((t, i) => {
+            const esMio = !!currentUserId && t.numero_asignado?.participante?.user_id === currentUserId
             return (
-              <div key={t.id} className={cn('flex items-center gap-3 px-4 py-3.5',
-                i < turnos.length - 1 && 'border-b border-border')}>
-                <div className={cn('flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold shrink-0',
-                  t.estado === 'cobrado' ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground')}>
+              <div key={t.id} className={cn(
+                'flex items-center gap-3 px-4 py-3.5',
+                i < turnos.length - 1 && 'border-b border-border',
+                esMio && 'bg-amber-100/70 dark:bg-amber-900/25 border-l-2 border-l-amber-400 dark:border-l-amber-500'
+              )}>
+                <div className={cn(
+                  'flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold shrink-0',
+                  t.estado === 'cobrado' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+                )}>
                   {t.orden}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium capitalize truncate">{formatFecha(t.fecha)}</p>
                   {t.participanteNombre
-                    ? <p className="text-xs text-muted-foreground">{t.participanteNombre} · nº {t.numero_asignado?.numero}</p>
+                    ? <p className="text-xs text-muted-foreground flex items-center gap-1">
+                        {t.participanteNombre}
+                        {esMio && <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 px-1.5 py-0.5 rounded-full">tuyo</span>}
+                      </p>
                     : <p className="text-xs text-muted-foreground">Sin asignar</p>}
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {t.estado === 'cobrado' ? (
-                    <div className="flex items-center gap-1 text-primary">
-                      <CheckCircle2 className="h-4 w-4" />
-                      <span className="text-xs font-medium">Cobrado</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1 text-muted-foreground">
-                      <Clock className="h-4 w-4" />
-                      <span className="text-xs font-medium">Pendiente</span>
-                    </div>
-                  )}
+                <div className="shrink-0">
+                  {t.estado === 'cobrado'
+                    ? <CheckCircle className="h-5 w-5 text-primary" />
+                    : <Circle className="h-5 w-5 text-muted-foreground/40" />}
                 </div>
               </div>
             )

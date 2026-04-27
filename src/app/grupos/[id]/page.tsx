@@ -15,6 +15,9 @@ import { cn } from '@/lib/utils'
 const estadoBadge: Record<string, 'success' | 'secondary' | 'destructive'> = {
   activo: 'success', completado: 'secondary', cancelado: 'destructive',
 }
+const estadoLabel: Record<string, string> = {
+  activo: 'activo', completado: '✓ completado', cancelado: 'cancelado',
+}
 
 export default async function GrupoPage({ params }: { params: { id: string } }) {
   const supabase = createClient()
@@ -81,7 +84,7 @@ export default async function GrupoPage({ params }: { params: { id: string } }) 
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-1.5 flex-1 min-w-0">
               <div className="flex flex-wrap gap-1.5">
-                <Badge variant={estadoBadge[grupo.estado]}>{grupo.estado}</Badge>
+                <Badge variant={estadoBadge[grupo.estado]}>{estadoLabel[grupo.estado] ?? grupo.estado}</Badge>
                 {esAdmin && <Badge variant="outline" className="text-primary border-primary/30 text-xs">admin</Badge>}
               </div>
               {esAdmin

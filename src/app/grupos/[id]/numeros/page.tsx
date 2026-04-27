@@ -24,23 +24,43 @@ export default function NumerosPage() {
   const [loading, setLoading]   = useState(true)
   const [saving, setSaving]     = useState(false)
   const [saved, setSaved]       = useState(false)
+  const [turnosCobrados, setTurnosCobrados] = useState<Record<number, boolean>>({})
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
   useEffect(() => { cargar() }, [])
+
+  // RealTime
+  useEffect(() => {
+    const channel = supabase.channel('numeros-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'numeros_asignados', filter: `grupo_id=eq.${grupoId}` }, () => cargar())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'turnos', filter: `grupo_id=eq.${grupoId}` }, () => cargar())
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [grupoId])
 
   async function cargar() {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
+    if (user) setCurrentUserId(user.id)
 
-    const [{ data: g }, { data: parts }, { data: n }] = await Promise.all([
+    const [{ data: g }, { data: parts }, { data: n }, { data: turnosData }] = await Promise.all([
       supabase.from('grupos').select('nombre, cantidad_numeros, creado_por').eq('id', grupoId).single(),
       supabase.from('participantes').select('user_id, rol').eq('grupo_id', grupoId),
       supabase.from('numeros_asignados')
         .select('numero, participante_id, participante:participantes(user_id)')
         .eq('grupo_id', grupoId),
+      supabase.from('turnos').select('orden, estado').eq('grupo_id', grupoId),
     ])
 
     setGrupo(g)
     if (g && user) setEsAdmin(g.creado_por === user.id)
+
+    // Mapa de número → true si su turno está cobrado
+    const turnosCobradosMap: Record<number, boolean> = {}
+    turnosData?.forEach((t: any) => {
+      if (t.estado === 'cobrado') turnosCobradosMap[t.orden] = true
+    })
+    setTurnosCobrados(turnosCobradosMap)
 
     // Traer perfiles de todos los participantes
     if (parts && parts.length > 0) {
@@ -202,44 +222,66 @@ export default function NumerosPage() {
             const nombreGuardado = asigNombres[num]
             const nombreActual = uid ? (miembros.find(m => m.user_id === uid)?.nombre || nombreGuardado || '') : ''
 
+            const bloqueado = !!turnosCobrados[num]
+            const esMio = uid === currentUserId  // aplica tanto a admin como participante
             return (
-              <div key={num} className={`flex items-center gap-3 px-4 py-3 ${idx < grupo.cantidad_numeros - 1 ? 'border-b' : ''}`}>
-                <div className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold shrink-0 transition-colors ${uid ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+              <div key={num} className={`flex items-center gap-3 px-4 py-3 ${idx < grupo.cantidad_numeros - 1 ? 'border-b' : ''} ${bloqueado ? 'bg-muted/40' : ''}`}>
+                <div className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold shrink-0 transition-colors ${bloqueado ? 'bg-primary/30 text-primary/60' : esMio ? 'bg-amber-400 text-white ring-2 ring-amber-300' : uid ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
                   {num}
                 </div>
 
                 {esAdmin ? (
                   <div className="flex-1 space-y-0.5">
-                    <select
-                      value={uid || ''}
-                      onChange={e => {
-                        const newUid = e.target.value
-                        const nombre = miembros.find(m => m.user_id === newUid)?.nombre || ''
-                        setAsig(prev => ({ ...prev, [num]: newUid }))
-                        setAsigN(prev => ({ ...prev, [num]: nombre }))
-                        setSaved(false)
-                      }}
-                      className="w-full h-9 rounded-md border border-input bg-background px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    >
-                      <option value="">— Sin asignar —</option>
-                      {miembros.map(m => (
-                        <option key={m.user_id} value={m.user_id}>
-                          {m.nombre}{conteo[m.user_id] > 1 ? ` (${conteo[m.user_id]} nros.)` : ''}
-                        </option>
-                      ))}
-                    </select>
-                    {saved && nombreGuardado && (
-                      <p className="text-[11px] text-muted-foreground pl-1">
-                        ✓ <span className="font-medium text-foreground">{nombreGuardado}</span>
-                      </p>
+                    {bloqueado ? (
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">{nombreGuardado || 'Sin asignar'}</span>
+                        <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full">Cobrado</span>
+                      </div>
+                    ) : (
+                      <>
+                        <select
+                          value={uid || ''}
+                          onChange={e => {
+                            const newUid = e.target.value
+                            const nombre = miembros.find(m => m.user_id === newUid)?.nombre || ''
+                            setAsig(prev => ({ ...prev, [num]: newUid }))
+                            setAsigN(prev => ({ ...prev, [num]: nombre }))
+                            setSaved(false)
+                          }}
+                          className="w-full h-9 rounded-md border border-input bg-background px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                        >
+                          <option value="">— Sin asignar —</option>
+                          {miembros.map(m => (
+                            <option key={m.user_id} value={m.user_id}>
+                              {m.nombre}{conteo[m.user_id] > 1 ? ` (${conteo[m.user_id]} nros.)` : ''}
+                            </option>
+                          ))}
+                        </select>
+                        {saved && nombreGuardado && (
+                          <div className="pl-1 flex items-center gap-1 mt-0.5">
+                            {esMio ? (
+                              <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 px-1.5 py-0.5 rounded-full">tuyo</span>
+                            ) : (
+                              <p className="text-[11px] text-muted-foreground">
+                                ✓ <span className="font-medium text-foreground">{nombreGuardado}</span>
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 ) : (
-                  <span className="text-sm flex-1">
-                    {nombreActual
-                      ? <span className="font-medium">{nombreActual}</span>
-                      : <span className="text-muted-foreground italic">Sin asignar</span>}
-                  </span>
+                  <div className="flex items-center justify-between flex-1 gap-2">
+                    <span className="text-sm">
+                      {nombreActual
+                        ? <span className="font-medium">{nombreActual}</span>
+                        : <span className="text-muted-foreground italic">Sin asignar</span>}
+                    </span>
+                    {esMio && (
+                      <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 rounded-full shrink-0">tuyo</span>
+                    )}
+                  </div>
                 )}
               </div>
             )

@@ -32,6 +32,15 @@ export default function PagosPage() {
   useEffect(() => { cargarBase() }, [])
   useEffect(() => { if (turnoId && grupo) cargarPagos() }, [turnoId])
 
+  // RealTime
+  useEffect(() => {
+    const channel = supabase.channel('pagos-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pagos' }, () => { if (turnoId && grupo) cargarPagos() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'turnos', filter: `grupo_id=eq.${grupoId}` }, () => cargarBase())
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [grupoId, turnoId, grupo])
+
   async function cargarBase() {
     const { data: g } = await supabase.from('grupos').select('*').eq('id', grupoId).single()
     setGrupo(g)
